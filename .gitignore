@@ -123,6 +123,7 @@ dmypy.json
 .spyderproject/
 .spyproject/
 .ropeproject/
+*.code-workspace
 
 # OS junk
 .DS_Store
