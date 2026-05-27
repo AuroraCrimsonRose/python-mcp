@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+
+  "tool_types": {
+    "filesystem": ["read_file", "write_file", "delete_file", "append_file"],
+    "build": ["cmake_configure", "cmake_build", "cmake_clean"],
+    "container": ["docker_run", "docker_exec", "docker_build"],
+    "vm": ["qemu_run", "bochs_run"],
+    "media": ["ffmpeg_transcode", "extract_audio", "resize_image"],
+    "network": ["gitea_push", "http_request"],
+    "analysis": ["search_text", "analyze_code", "workspace_stats"]
+  },
+
+  "risk_levels": {
+    "filesystem": "medium",
+    "build": "high",
+    "container": "high",
+    "vm": "critical",
+    "media": "low",
+    "network": "medium",
+    "analysis": "low"
+  }
+}

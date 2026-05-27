@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "description": "MCP test execution profiles for safe, staged tool testing and CI orchestration.",
+
+  "default_profile": "unit",
+
+  "global": {
+    "timeout_seconds": 10,
+    "allow_network": false,
+    "allow_subprocess": true,
+    "allow_filesystem_write": false,
+    "allow_docker": false,
+    "allow_cmake": false,
+    "allow_qemu": false,
+    "allow_git_push": false,
+    "log_level": "info"
+  },
+
+  "profiles": {
+    "unit": {
+      "description": "Fast isolated tests. No side effects.",
+      "inherits": "global",
+      "overrides": {
+        "allow_filesystem_write": false,
+        "allow_network": false,
+        "timeout_seconds": 5
+      }
+    },
+
+    "integration": {
+      "description": "Tool interaction tests (http, subprocess, file system).",
+      "inherits": "global",
+      "overrides": {
+        "allow_filesystem_write": true,
+        "allow_network": true,
+        "timeout_seconds": 30
+      }
+    },
+
+    "dangerous": {
+      "description": "Full system tests. Docker, cmake, qemu allowed.",
+      "inherits": "global",
+      "overrides": {
+        "allow_filesystem_write": true,
+        "allow_network": true,
+        "allow_docker": true,
+        "allow_cmake": true,
+        "allow_qemu": true,
+        "timeout_seconds": 600
+      }
+    },
+
+    "chaos": {
+      "description": "Stress testing and randomness injection.",
+      "inherits": "dangerous",
+      "overrides": {
+        "allow_network": true,
+        "timeout_seconds": 120,
+        "enable_reruns": true,
+        "enable_random_order": true,
+        "enable_parallel": true
+      }
+    },
+
+    "ci": {
+      "description": "CI-safe deterministic execution.",
+      "inherits": "unit",
+      "overrides": {
+        "timeout_seconds": 15,
+        "enable_coverage": true
+      }
+    }
+  },
+
+  "tool_rules": {
+    "cmake": {
+      "allowed_profiles": ["dangerous", "chaos"]
+    },
+    "docker": {
+      "allowed_profiles": ["dangerous", "chaos"]
+    },
+    "qemu": {
+      "allowed_profiles": ["dangerous"]
+    },
+    "filesystem_write": {
+      "allowed_profiles": ["integration", "dangerous", "chaos"]
+    },
+    "git_push": {
+      "allowed_profiles": ["dangerous"]
+    },
+    "network": {
+      "allowed_profiles": ["integration", "dangerous", "chaos"]
+    }
+  }
+}
