@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from mcp.server.fastmcp import FastMCP
 
 from core.config import (
@@ -7,6 +10,7 @@ from core.config import (
     API_HOST,
     API_PORT,
     SERVER_NAME,
+    DEBUG,
 )
 from core.events import bus, Event
 from core.metrics import metrics
@@ -15,6 +19,18 @@ from core.executor import executor
 from core.tools.registry import registry
 from core.tools.base import ToolContext
 from tools.discovery import load_all_tools
+
+
+# =========================
+# LOGGING SETUP
+# =========================
+
+log_level = logging.DEBUG if DEBUG else logging.INFO
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -35,7 +51,8 @@ mcp = FastMCP(SERVER_NAME)
 # REGISTRY → MCP AUTO BIND
 # =========================
 
-def bind_registry_tools():
+def bind_registry_tools() -> None:
+    """Bind all registered tools to MCP server with proper error handling."""
     for tool in registry.all_tools():
 
         tool_name = tool.name
@@ -45,17 +62,34 @@ def bind_registry_tools():
             f"{tool_name} tool"
         )
 
-        def make_handler(bound_tool):
-            def handler(**kwargs):
+        # Fix issue #2: Use default argument to avoid closure binding bug
+        def make_handler(bound_tool: Any) -> Any:
+            """Create handler with proper binding to prevent late-binding issues."""
+            def handler(**kwargs: Any) -> Any:
                 ctx = ToolContext(
                     dry_run=safety.dry_run
                 )
 
-                return registry.run(
-                    name=bound_tool.name,
-                    payload=kwargs,
-                    ctx=ctx
-                )
+                try:
+                    return registry.run(
+                        name=bound_tool.name,
+                        payload=kwargs,
+                        ctx=ctx
+                    )
+                except Exception as e:
+                    # Fix issue #3: Add error handling in tool handler
+                    logger.exception(f"Error executing tool {bound_tool.name}")
+                    bus.emit(Event(
+                        name="tool_handler_error",
+                        source="CORE",
+                        level="ERROR",
+                        data={
+                            "tool": bound_tool.name,
+                            "error": str(e),
+                            "error_type": type(e).__name__
+                        }
+                    ))
+                    raise
 
             return handler
 
@@ -78,10 +112,13 @@ def bind_registry_tools():
 # SYSTEM BOOT
 # =========================
 
-def boot_system():
+def boot_system() -> None:
+    """Initialize and boot the system."""
     load_all_tools()
     bind_registry_tools()
 
+    tool_count = len(registry.all_tools())
+    
     bus.emit(Event(
         name="system_boot",
         source="CORE",
@@ -89,16 +126,19 @@ def boot_system():
         data={
             "workspace": str(WORKSPACE_ROOT),
             "server": SERVER_NAME,
-            "tool_count": len(registry._tools)
+            "tool_count": tool_count
         }
     ))
+
+    logger.info(f"System boot complete. Loaded {tool_count} tools.")
 
 
 # =========================
 # METRICS
 # =========================
 
-def get_metrics_snapshot():
+def get_metrics_snapshot() -> dict[str, Any]:
+    """Return current metrics snapshot."""
     return metrics.snapshot()
 
 
@@ -106,7 +146,8 @@ def get_metrics_snapshot():
 # DEBUG EVENTS (OPTIONAL)
 # =========================
 
-def debug_event_printer(event: Event):
+def debug_event_printer(event: Event) -> None:
+    """Print debug information for events."""
     print(
         f"[EVENT] "
         f"{event.source} - "
@@ -119,10 +160,25 @@ def debug_event_printer(event: Event):
 
 
 # =========================
+# GRACEFUL SHUTDOWN
+# =========================
+
+def shutdown_gracefully() -> None:
+    """Clean shutdown of executor and other resources."""
+    logger.info("Initiating graceful shutdown...")
+    try:
+        executor.shutdown()
+        logger.info("Executor shut down successfully.")
+    except Exception as e:
+        logger.error(f"Error during executor shutdown: {e}")
+
+
+# =========================
 # MCP RUNNER
 # =========================
 
-def run_mcp():
+def run_mcp() -> None:
+    """Run the MCP server."""
     boot_system()
 
     bus.emit(Event(
@@ -134,6 +190,7 @@ def run_mcp():
         }
     ))
 
+    logger.info(f"Starting MCP server: {SERVER_NAME}")
     mcp.run(transport="stdio")
 
 
@@ -141,18 +198,19 @@ def run_mcp():
 # FASTAPI HOOK (ISOLATED)
 # =========================
 
-async def run_api():
+async def run_api() -> None:
+    """Run FastAPI metrics server (intended for separate process or async context)."""
     from fastapi import FastAPI
     import uvicorn
 
     app = FastAPI()
 
     @app.get("/metrics")
-    def metrics_route():
+    def metrics_route() -> dict[str, Any]:
         return get_metrics_snapshot()
 
     @app.get("/health")
-    def health():
+    def health() -> dict[str, str]:
         return {
             "status": "ok"
         }
@@ -178,19 +236,24 @@ if __name__ == "__main__":
         run_mcp()
 
     except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt received.")
         bus.emit(Event(
             name="system_shutdown",
             source="CORE",
             level="INFO"
         ))
+        shutdown_gracefully()
 
     except Exception as e:
+        logger.exception("Fatal error occurred.")
         bus.emit(Event(
             name="fatal_error",
             source="CORE",
             level="ERROR",
             data={
-                "error": str(e)
+                "error": str(e),
+                "error_type": type(e).__name__
             }
         ))
+        shutdown_gracefully()
         raise
